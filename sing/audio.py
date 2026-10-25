@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
 import subprocess
@@ -130,7 +131,7 @@ async def resolve_reference(
                 path = Path(await comp.convert_to_file_path())
             except Exception as exc:
                 raise AudioError(f"读取语音失败：{exc}") from exc
-            return _check_size(path, max_mb), "语音消息"
+            return await _prepare_local(path, work_dir, max_mb), "语音消息"
         if isinstance(comp, File):
             try:
                 raw = comp.file
@@ -139,9 +140,55 @@ async def resolve_reference(
             path = Path(str(raw))
             if not path.is_absolute():
                 raise AudioError("音频文件路径无效")
-            return _check_size(path, max_mb), "音频文件"
+            return await _prepare_local(path, work_dir, max_mb), "音频文件"
 
     raise AudioError("没找到参考音频，请把歌曲或语音和命令一起发，或者引用那条消息")
+
+
+async def _prepare_local(path: Path, work_dir: Path, max_mb: float) -> Path:
+    """QQ 有时把 MP3 语音转成很大的 WAV；超过上限时压回 MP3。"""
+    if not path.is_file():
+        raise AudioError("参考音频文件不存在")
+    if path.stat().st_size <= max_mb * 1024 * 1024:
+        return path
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    target = work_dir / f"ref_{uuid.uuid4().hex[:8]}.mp3"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(path),
+            "-vn",
+            "-map_metadata",
+            "-1",
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            str(target),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except TimeoutError as exc:
+            proc.kill()
+            await proc.communicate()
+            raise AudioError("压缩参考音频超时") from exc
+        if proc.returncode != 0:
+            raise AudioError(f"压缩参考音频失败：{stderr.decode(errors='replace')[:160]}")
+        return _check_size(target, max_mb)
+    except FileNotFoundError as exc:
+        raise AudioError("参考音频过大，且服务器未安装 FFmpeg") from exc
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
 
 
 def _check_size(path: Path, max_mb: float) -> Path:
