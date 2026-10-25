@@ -221,21 +221,20 @@ class SingPlugin(Star):
             try:
                 cover_lyrics = await transcribe(self.api_key, ref_path, model=self.asr_model)
             except AsrError as exc:
-                logger.warning("[sing] 识别歌词失败：%s", exc)
-                raise AsrError("没能从参考音频识别歌词，请用 --歌词 提供这一段歌词") from exc
+                logger.warning("[sing] 识别歌词失败，继续不带歌词翻唱：%s", exc)
 
         audio_bytes = audio.encode_base64(ref_path)
         if options.dry_vocal:
             task_id, raw = await self._client.generate(
                 caption=style,
-                lyrics=cover_lyrics,
+                lyrics=cover_lyrics or None,
                 task="vocal_to_music",
                 vocal_audio=audio_bytes,
             )
         else:
             task_id, raw = await self._client.generate(
                 caption=style,
-                lyrics=cover_lyrics,
+                lyrics=cover_lyrics or None,
                 task="music_cover",
                 song_audio=audio_bytes,
             )

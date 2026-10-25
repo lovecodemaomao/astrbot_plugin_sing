@@ -36,7 +36,7 @@ git clone https://github.com/lovecodemaomao/astrbot_plugin_sing
 |---|---|---|
 | `api_key` | 空 | **必填**，阶跃星辰开放平台的 API Key |
 | `model_id` | `stepaudio-3-music-preview` | 音乐模型 ID |
-| `asr_model` | `stepaudio-2.5-asr` | 翻唱时从参考音频取词；识别失败时需用 `--歌词` 提供 |
+| `asr_model` | `stepaudio-2.5-asr` | 翻唱时从参考音频取词；识别失败会尝试直接翻唱，也可用 `--歌词` 指定 |
 | `default_style` | 轻快 city pop，女声，温暖治愈，中速，清澈 | 未指定 `--风格` 时使用 |
 | `persona_prompt` | 空 | 写词用的人设描述，留空则写通用歌词 |
 | `daily_limit` | 5 | 每个会话每天最多唱几首 |
@@ -78,7 +78,7 @@ API Key 申请：<https://platform.stepfun.com>
 
 ```
 /唱歌  → 写词 → 提交 text_to_music → 轮询 → 发送语音
-/翻唱  → 取参考音频 → 识别歌词（失败请手动提供）→ 提交 music_cover / vocal_to_music → 轮询 → 发送语音
+/翻唱  → 取参考音频 → 尝试识别歌词 → 提交 music_cover / vocal_to_music → 轮询 → 发送语音
 ```
 
 生成一首歌通常需要 **1~3 分钟**，插件会先回一句「在写了」，完成后主动把语音发到会话。
