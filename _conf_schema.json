@@ -1,0 +1,65 @@
+{
+  "api_key": {
+    "description": "阶跃星辰 API Key",
+    "type": "string",
+    "default": "",
+    "hint": "在 platform.stepfun.com 申请，留空时插件不会发起任何请求"
+  },
+  "model_id": {
+    "description": "音乐模型 ID",
+    "type": "string",
+    "default": "stepaudio-3-music-preview",
+    "hint": "预览版限时免费，正式版上线后改成新的模型 ID"
+  },
+  "asr_model": {
+    "description": "翻唱取词用的语音识别模型",
+    "type": "string",
+    "default": "stepaudio-2.5-asr"
+  },
+  "default_style": {
+    "description": "默认曲风描述",
+    "type": "string",
+    "default": "轻快 city pop，女声，温暖治愈，中速，清澈"
+  },
+  "persona_prompt": {
+    "description": "写词时使用的人设描述",
+    "type": "text",
+    "default": "",
+    "hint": "留空则写通用歌词；填写后会作为角色设定交给模型"
+  },
+  "daily_limit": {
+    "description": "每个会话每天最多唱几首",
+    "type": "int",
+    "default": 5
+  },
+  "max_wait_seconds": {
+    "description": "单次生成最长等待时间（秒）",
+    "type": "int",
+    "default": 480
+  },
+  "poll_interval": {
+    "description": "轮询任务状态的间隔（秒）",
+    "type": "int",
+    "default": 8
+  },
+  "max_ref_mb": {
+    "description": "参考音频大小上限（MB）",
+    "type": "int",
+    "default": 20
+  },
+  "max_ref_seconds": {
+    "description": "参考音频时长上限（秒）",
+    "type": "int",
+    "default": 360
+  },
+  "enable_llm_tools": {
+    "description": "允许模型自动调用唱歌/翻唱工具",
+    "type": "bool",
+    "default": true
+  },
+  "keep_generated_days": {
+    "description": "生成文件保留天数",
+    "type": "int",
+    "default": 7
+  }
+}

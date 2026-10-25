@@ -1,0 +1,38 @@
+name: astrbot_plugin_sing
+display_name: AI 唱歌与翻唱（阶跃星辰）
+short_desc: 用阶跃星辰 StepAudio 3 Music 生成带人声的原创歌曲，支持翻唱
+desc: |
+  一个把「点歌」变成「真唱歌」的插件：调用阶跃星辰 StepAudio 3 Music，
+  按主题写词生成原创歌曲，或拿一段参考音频翻唱成新的曲风。
+
+  ## 功能
+  - `/唱歌 主题`：自动写词并生成带人声、伴奏的完整歌曲，以语音消息发送。
+  - `/翻唱`：发送或引用一段歌曲/语音，按指定曲风重新演唱；`--干声` 可保留参考音频的音色。
+  - 参数：`--风格`（曲风描述）、`--音色`（少女/御姐/少年/大叔等预设）、`--歌词`、`--纯音乐`、`--音频 URL`。
+  - 自然语言触发：注册了 `sing_song` / `cover_song` 两个 LLM 工具，聊天里说「唱一首关于加班的歌」即可。
+  - 每个会话每日配额、同会话串行、全局并发限制，生成任务后台执行不阻塞聊天。
+
+  ## 使用前提
+  - 需要在 [阶跃星辰开放平台](https://platform.stepfun.com) 申请 API Key，并填入插件配置。
+  - 唱歌模型 `stepaudio-3-music-preview` 目前处于限时免费阶段，正式版上线后请在配置中切换到新的模型 ID。
+  - 发送语音依赖 FFmpeg（AstrBot 运行环境通常已安装）。
+
+  ## 合规提示
+  翻唱功能仅用于处理你拥有合法授权的音频素材。请勿上传或传播未经授权的歌曲，
+  生成内容在公开发布时请遵守当地关于人工智能生成内容标识的规定。
+version: 1.0.0
+author: lovecodemaomao
+repo: https://github.com/lovecodemaomao/astrbot_plugin_sing
+astrbot_version: ">=4.17.0"
+support_platforms:
+  - qq_official
+  - aiocqhttp
+  - qq_official_webhook
+  - telegram
+  - discord
+tags:
+  - 唱歌
+  - 翻唱
+  - ai音乐
+  - stepfun
+  - 语音
