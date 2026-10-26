@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 import socket
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -16,6 +17,7 @@ __all__ = [
     "encode_base64",
     "probe_duration",
     "resolve_reference",
+    "split_for_qq",
     "validate",
 ]
 
@@ -31,6 +33,8 @@ AUDIO_EXTS = {
     ".opus",
     ".weba",
 }
+VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".flv"}
+VIDEO_HOSTS = {"bilibili.com", "b23.tv", "youtube.com", "youtu.be"}
 
 
 class AudioError(RuntimeError):
@@ -47,6 +51,74 @@ def _public_address(value: str) -> bool:
         return ipaddress.ip_address(value).is_global
     except ValueError:
         return False
+
+
+def _video_site(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower().rstrip(".")
+    return (
+        parsed.scheme in {"http", "https"}
+        and not parsed.username
+        and not parsed.password
+        and (port is None or port in {80, 443})
+        and any(host == domain or host.endswith("." + domain) for domain in VIDEO_HOSTS)
+    )
+
+
+async def _download_video(url: str, target_dir: Path, max_seconds: float) -> Path:
+    """提取公开视频音轨；限制站点、时长和下载文件大小。"""
+    if not _video_site(url):
+        raise AudioError("暂只支持 B 站、YouTube 的公开视频链接")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"ref_{uuid.uuid4().hex[:8]}"
+    output = target_dir / f"{stem}.%(ext)s"
+    command = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--ignore-config",
+        "--no-playlist",
+        "--no-progress",
+        "--max-filesize",
+        "50M",
+        "--match-filter",
+        f"duration <= {int(max_seconds)}",
+        "-f",
+        "bestaudio/best",
+        "-x",
+        "--audio-format",
+        "mp3",
+        "--audio-quality",
+        "128K",
+        "-o",
+        str(output),
+        url,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise AudioError("视频音轨提取工具不可用") from exc
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=240)
+    except TimeoutError as exc:
+        proc.kill()
+        await proc.communicate()
+        raise AudioError("下载视频音轨超时") from exc
+    if proc.returncode != 0:
+        detail = stderr.decode(errors="replace").strip().splitlines()[-1:] or [""]
+        raise AudioError(f"提取视频音轨失败：{detail[0][:180]}")
+    result = target_dir / f"{stem}.mp3"
+    if not result.is_file():
+        raise AudioError("视频音轨下载后未找到 MP3 文件")
+    return result
 
 
 async def _download(url: str, target_dir: Path, max_mb: float, timeout: float = 120.0) -> Path:
@@ -98,7 +170,12 @@ async def _download(url: str, target_dir: Path, max_mb: float, timeout: float = 
 
 
 async def resolve_reference(
-    event, *, url: str = "", work_dir: Path, max_mb: float = 20.0
+    event,
+    *,
+    url: str = "",
+    work_dir: Path,
+    max_mb: float = 20.0,
+    max_seconds: float = 360.0,
 ) -> tuple[Path, str]:
     """按优先级取参考音频：命令里的 URL > 当前消息附件 > 引用消息附件。
 
@@ -109,23 +186,32 @@ async def resolve_reference(
         AudioError: 没有音频、下载失败或超过大小限制。
     """
     if url:
+        if _video_site(url):
+            path = await _download_video(url, work_dir, max_seconds)
+            return _check_size(path, max_mb), "视频链接"
         path = await _download(url, work_dir, max_mb)
         return _check_size(path, max_mb), "链接"
 
-    from astrbot.core.message.components import File, Record, Reply
+    from astrbot.core.message.components import File, Record, Reply, Video
 
     messages = list(event.get_messages())
 
     def _audio_components(components):
         for comp in components or []:
-            if isinstance(comp, (Record, File)):
+            if isinstance(comp, (Record, File, Video)):
                 yield comp
             elif isinstance(comp, Reply):
                 for nested in getattr(comp, "chain", None) or []:
-                    if isinstance(nested, (Record, File)):
+                    if isinstance(nested, (Record, File, Video)):
                         yield nested
 
     for comp in _audio_components(messages):
+        if isinstance(comp, Video):
+            try:
+                path = Path(await comp.convert_to_file_path())
+            except Exception as exc:
+                raise AudioError(f"读取视频失败：{exc}") from exc
+            return await _prepare_local(path, work_dir, max_mb), "视频消息"
         if isinstance(comp, Record):
             try:
                 path = Path(await comp.convert_to_file_path())
@@ -134,7 +220,7 @@ async def resolve_reference(
             return await _prepare_local(path, work_dir, max_mb), "语音消息"
         if isinstance(comp, File):
             try:
-                raw = comp.file
+                raw = await comp.get_file()
             except Exception as exc:
                 raise AudioError(f"读取音频文件失败：{exc}") from exc
             path = Path(str(raw))
@@ -146,10 +232,11 @@ async def resolve_reference(
 
 
 async def _prepare_local(path: Path, work_dir: Path, max_mb: float) -> Path:
-    """QQ 有时把 MP3 语音转成很大的 WAV；超过上限时压回 MP3。"""
+    """视频提取音轨；QQ 转成过大 WAV 时压回 MP3。"""
     if not path.is_file():
         raise AudioError("参考音频文件不存在")
-    if path.stat().st_size <= max_mb * 1024 * 1024:
+    is_video = path.suffix.lower() in VIDEO_EXTS
+    if not is_video and path.stat().st_size <= max_mb * 1024 * 1024:
         return path
 
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -170,7 +257,7 @@ async def _prepare_local(path: Path, work_dir: Path, max_mb: float) -> Path:
             "-codec:a",
             "libmp3lame",
             "-b:a",
-            "192k",
+            "128k" if is_video else "192k",
             str(target),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
@@ -234,6 +321,50 @@ def validate(path: Path, *, max_mb: float = 20.0, max_seconds: float = 360.0) ->
     if duration and duration > max_seconds:
         raise AudioError(f"参考音频太长（{duration:.0f} 秒 > {max_seconds:.0f} 秒）")
     return duration
+
+
+async def split_for_qq(path: Path, work_dir: Path, max_seconds: float = 55.0) -> list[Path]:
+    """QQ 官方通道对长语音不稳定，拆成短 MP3 后按顺序发送。"""
+    duration = probe_duration(path)
+    if not duration or duration <= max_seconds:
+        return [path]
+    work_dir.mkdir(parents=True, exist_ok=True)
+    pattern = work_dir / f"{path.stem}_part_%02d.mp3"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(path),
+            "-vn",
+            "-c:a",
+            "copy",
+            "-f",
+            "segment",
+            "-segment_time",
+            str(max_seconds),
+            str(pattern),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except TimeoutError as exc:
+            proc.kill()
+            await proc.communicate()
+            raise AudioError("拆分语音超时") from exc
+        if proc.returncode != 0:
+            raise AudioError(f"FFmpeg 拆分失败：{stderr.decode(errors='replace')[:160]}")
+    except FileNotFoundError as exc:
+        raise AudioError("服务器没有 FFmpeg，无法拆分长语音") from exc
+    parts = sorted(work_dir.glob(f"{path.stem}_part_*.mp3"))
+    if not parts or any(part.stat().st_size == 0 for part in parts):
+        raise AudioError("拆分后没有得到有效语音")
+    return parts
 
 
 def encode_base64(path: Path) -> bytes:

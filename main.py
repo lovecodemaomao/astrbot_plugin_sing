@@ -9,7 +9,7 @@ from pathlib import Path
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
-from astrbot.core.message.components import File, Record
+from astrbot.core.message.components import Record
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.star.filter.command import GreedyStr
 
@@ -25,8 +25,8 @@ HELP_SING = (
     "例：/唱歌 夏天的海 --音色 少女 --风格 轻快 city pop"
 )
 HELP_COVER = (
-    "用法：/翻唱 [--风格 描述] [--音色 预设] [--歌词 歌词] [--干声] [--音频 URL]\n"
-    "把歌曲文件/语音和命令一起发，或引用那条消息；--干声 会保留参考音频的音色"
+    "用法：/翻唱 [歌曲或 B 站视频链接] [--风格 描述] [--音色 预设] [--歌词 歌词] [--干声] [--音频 URL]\n"
+    "也可以把歌曲文件/语音和命令一起发，或引用那条消息；--干声 会保留参考音频的音色"
 )
 
 
@@ -109,7 +109,11 @@ class SingPlugin(Star):
             return
         self._quota.consume(umo)
 
-        yield event.plain_result("在写了在写了，大概 1~3 分钟，唱好我直接把语音发出来～")
+        yield event.plain_result(
+            "收到，正在翻唱。完整歌曲可能要几分钟，唱好后会分段发语音～"
+            if mode == "cover"
+            else "在写了在写了，大概 1~3 分钟，唱好我直接把语音发出来～"
+        )
         self._spawn(self._generate_and_send(event, options, mode))
 
     # ------------------------------------------------------------------
@@ -133,15 +137,19 @@ class SingPlugin(Star):
         style: str = "",
         voice: str = "",
         lyrics: str = "",
+        audio_url: str = "",
     ):
-        """翻唱当前消息或引用消息里的歌曲/语音，并发送结果。
+        """根据歌曲/视频链接，或当前消息及引用里的歌曲/语音翻唱并发送结果。
 
         Args:
             style (string): 目标曲风，可留空
             voice (string): 目标音色，可留空
             lyrics (string): 指定歌词，可留空
+            audio_url (string): 歌曲直链或 B 站、YouTube 视频链接；没有链接时留空
         """
-        return await self._handle_tool(event, "cover", style=style, voice=voice, lyrics=lyrics)
+        return await self._handle_tool(
+            event, "cover", style=style, voice=voice, lyrics=lyrics, audio_url=audio_url
+        )
 
     async def _handle_tool(self, event: AstrMessageEvent, mode: str, **kwargs) -> str:
         if not self.enable_llm_tools:
@@ -154,6 +162,7 @@ class SingPlugin(Star):
             style=str(kwargs.get("style") or ""),
             voice=str(kwargs.get("voice") or ""),
             lyrics=str(kwargs.get("lyrics") or ""),
+            audio_url=str(kwargs.get("audio_url") or ""),
         )
         umo = str(event.unified_msg_origin)
         if self._quota.remaining(umo) <= 0:
@@ -161,7 +170,11 @@ class SingPlugin(Star):
         self._quota.consume(umo)
 
         self._spawn(self._generate_and_send(event, options, mode))
-        return "已经开始写了，1~3 分钟后会把语音发出来。"
+        return (
+            "已经开始翻唱，完成后会分段发语音。"
+            if mode == "cover"
+            else "已经开始写了，1~3 分钟后会把语音发出来。"
+        )
 
     # ------------------------------------------------------------------
     # 生成与发送
@@ -192,7 +205,11 @@ class SingPlugin(Star):
             self._cleanup_generated()
 
     async def _produce(self, event: AstrMessageEvent, options: args.CommandOptions, mode: str) -> Path:
-        style = caption.build_caption(options.style, options.voice, self.default_style)
+        style = caption.build_caption(
+            options.style,
+            options.voice,
+            self.default_style if mode == "sing" else "自然演唱，尽量保留参考歌曲的旋律、节奏和歌词",
+        )
 
         if mode == "sing":
             text = options.lyrics.strip()
@@ -212,6 +229,7 @@ class SingPlugin(Star):
             url=options.audio_url,
             work_dir=self.ref_dir,
             max_mb=self.max_ref_mb,
+            max_seconds=self.max_ref_seconds,
         )
         duration = audio.validate(ref_path, max_mb=self.max_ref_mb, max_seconds=self.max_ref_seconds)
         logger.info("[sing] 参考音频 %s（%s，%.0f 秒）", ref_path.name, source, duration)
@@ -248,18 +266,29 @@ class SingPlugin(Star):
 
     async def _send_audio(self, umo: str, path: Path) -> None:
         try:
-            await self.context.send_message(umo, MessageChain([Record.fromFileSystem(str(path))]))
+            parts = await audio.split_for_qq(path, self.gen_dir)
+        except audio.AudioError as exc:
+            logger.error("[sing] 拆分语音失败：%s", exc)
+            await self._send_text(umo, f"歌生成好了，但拆分 QQ 语音失败：{exc}")
             return
-        except Exception as exc:
-            logger.warning("[sing] 语音发送失败，改用文件：%s", exc)
-        try:
-            await self.context.send_message(
-                umo,
-                MessageChain([File(name=path.name, file=str(path))]),
-            )
-        except Exception as exc:
-            logger.error("[sing] 文件发送也失败：%s", exc)
-            await self._send_text(umo, "歌生成好了，但 QQ 没有接受语音或文件。请联系管理员查看日志。")
+        if len(parts) > 1:
+            await self._send_text(umo, f"唱好了！全曲分成 {len(parts)} 段，按顺序听～")
+        for index, part in enumerate(parts, 1):
+            for attempt in range(2):
+                try:
+                    await self.context.send_message(umo, MessageChain([Record.fromFileSystem(str(part))]))
+                    break
+                except Exception as exc:
+                    logger.warning(
+                        "[sing] 语音 %d/%d 发送失败（第 %d 次）：%s", index, len(parts), attempt + 1, exc
+                    )
+                    if attempt == 0:
+                        await asyncio.sleep(15)
+            else:
+                await self._send_text(umo, f"第 {index}/{len(parts)} 段语音发送失败，已保留在服务器上。")
+                return
+            if index < len(parts):
+                await asyncio.sleep(10)
 
     async def _send_text(self, umo: str, text: str) -> None:
         try:

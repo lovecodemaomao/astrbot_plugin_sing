@@ -70,6 +70,11 @@ class ParseCoverTest(unittest.TestCase):
         opts = parse('--歌词 "[Verse 1] 你好"', mode="cover")
         self.assertEqual(opts.lyrics, "[Verse 1] 你好")
 
+    def test_cover_accepts_bare_video_link(self):
+        opts = parse("https://www.bilibili.com/video/BV123 --音色 少女", mode="cover")
+        self.assertEqual(opts.audio_url, "https://www.bilibili.com/video/BV123")
+        self.assertEqual(opts.voice, "少女")
+
 
 if __name__ == "__main__":
     unittest.main()

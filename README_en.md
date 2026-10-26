@@ -10,7 +10,7 @@ backing track from a topic, or re-sing a reference track in a different style, u
 ## Features
 
 - `/唱歌 <topic>` — write lyrics and generate a complete song, sent as a voice message
-- `/翻唱` — send or quote a track, then re-sing it in the requested style
+- `/翻唱` — send or quote a track or video, or provide a public audio/Bilibili/YouTube URL, to generate a cover-style version
 - `--干声` — keep the reference timbre, regenerate only the backing track
 - Parameters: `--风格` style, `--音色` voice preset, `--歌词` lyrics, `--纯音乐` instrumental, `--音频` URL
 - LLM tools `sing_song` / `cover_song` for natural-language triggering
@@ -23,6 +23,7 @@ Once the plugin is listed in the AstrBot market, search for **AI 唱歌与翻唱
 ```bash
 cd AstrBot/data/plugins
 git clone https://github.com/lovecodemaomao/astrbot_plugin_sing
+pip install -r astrbot_plugin_sing/requirements.txt
 ```
 
 ## Configuration
@@ -37,14 +38,15 @@ See `_conf_schema.json` for every option.
 /唱歌 加班 --风格 "慵懒 lo-fi" --音色 御姐
 /翻唱                       # attach or quote an audio file
 /翻唱 --风格 摇滚 --干声
+/翻唱 https://www.bilibili.com/video/BVxxxxxxxxxx --音色 少女
 ```
 
 Values containing spaces must be quoted.
 
 ## Notes
 
-- Generation usually takes 1–3 minutes; the plugin replies immediately and pushes the voice message when done.
-- If voice delivery fails, the mp3 is sent as a file instead.
+- Generation may take several minutes. Long results are split into approximately 55-second voice messages for QQ.
+- Video URLs are fetched with yt-dlp; some sites may block cloud-server downloads. Sending the video or MP3 as a QQ attachment remains available.
 - Voice delivery requires FFmpeg in the runtime.
 
 ## Compliance

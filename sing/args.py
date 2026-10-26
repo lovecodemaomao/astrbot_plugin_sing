@@ -36,7 +36,9 @@ _VALUE_FLAGS = {
     "--歌词": "lyrics",
     "--lyrics": "lyrics",
     "--音频": "audio_url",
+    "--视频": "audio_url",
     "--audio": "audio_url",
+    "--video": "audio_url",
     "--url": "audio_url",
 }
 
@@ -127,7 +129,10 @@ def parse(raw: str, *, mode: str = "sing") -> CommandOptions:
         if token.startswith("-") and len(token) > 1:
             raise ArgsError(f"不认识的参数：{token}")
 
-        words.append(token)
+        if mode == "cover" and token.startswith(("https://", "http://")) and not opts.audio_url:
+            opts.audio_url = token
+        else:
+            words.append(token)
         index += 1
 
     opts.text = " ".join(words).strip()
